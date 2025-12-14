@@ -1,0 +1,361 @@
+import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Alert, Platform, RefreshControl, SafeAreaView, ScrollView, StatusBar, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+
+// 🔗 SERVER ADDRESS
+const API_URL = 'http://192.168.18.21:3000'; 
+
+export default function ProviderDashboard() {
+  const router = useRouter();
+  const [isOnline, setIsOnline] = useState(true);
+  const [orders, setOrders] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [ownerId, setOwnerId] = useState(null);
+  const [shopName, setShopName] = useState('Your Laundry Shop');
+  const [notificationCount, setNotificationCount] = useState(0); 
+  // --- NEW STATE ---
+  const [hasServices, setHasServices] = useState(true); 
+
+  // 1. Load Owner ID and Shop Name
+  useEffect(() => {
+    const loadOwnerData = async () => {
+      const id = await AsyncStorage.getItem('user_id');
+      const name = await AsyncStorage.getItem('user_name'); 
+      const shop_name = await AsyncStorage.getItem('shop_name'); 
+      
+      setOwnerId(id);
+      
+      if (shop_name) {
+          setShopName(shop_name); 
+      } else if (name) {
+          setShopName(`${name}'s Laundry`); 
+      }
+    };
+    loadOwnerData();
+  }, []);
+  
+  // 2. Fetch Notification Count 
+  const fetchNotificationCount = useCallback(async (id) => {
+      if (!id) return;
+      try {
+          const response = await fetch(`${API_URL}/notifications/${id}`);
+          const data = await response.json();
+          setNotificationCount(data.count);
+      } catch (error) {
+          console.log("Error fetching notifications:", error);
+      }
+  }, []);
+  
+  // 3. NEW: Check if the shop has any services defined
+  const checkServices = useCallback(async (id) => {
+      if (!id) return;
+      try {
+          const response = await fetch(`${API_URL}/services/${id}`);
+          const data = await response.json();
+          // If the array is empty, set hasServices to false
+          setHasServices(data.length > 0); 
+      } catch (error) {
+          console.log("Error checking services:", error);
+          setHasServices(false);
+      }
+  }, []);
+
+
+  // 4. Fetch Orders - Requires OwnerID to filter
+  const fetchOrders = useCallback(async (id) => {
+    if (!id) return;
+    try {
+      setRefreshing(true);
+      const response = await fetch(`${API_URL}/orders/${id}`); 
+      const data = await response.json();
+      setOrders(data);
+      
+      markNotificationsAsSeen(id);
+      
+    } catch (error) {
+      console.log("Error fetching orders:", error);
+    } finally {
+        setRefreshing(false);
+    }
+  }, []);
+
+  // 5. Fetch data every time the screen is focused
+  useFocusEffect(
+    useCallback(() => {
+        if (ownerId) {
+            fetchOrders(ownerId);
+            fetchNotificationCount(ownerId);
+            checkServices(ownerId); // CHECK SERVICES ON FOCUS
+        }
+        return () => {}; 
+    }, [ownerId, fetchOrders, fetchNotificationCount, checkServices])
+  );
+  
+  // 6. Mark Notifications As Seen
+  const markNotificationsAsSeen = async (id) => {
+      if (!id) return;
+      try {
+          await fetch(`${API_URL}/orders/seen/${id}`, {
+              method: 'PUT',
+          });
+          setNotificationCount(0);
+      } catch (error) {
+          console.log("Error marking notifications as seen:", error);
+      }
+  };
+
+
+  const onRefresh = useCallback(() => {
+    if (ownerId) {
+        fetchOrders(ownerId);
+        fetchNotificationCount(ownerId);
+        checkServices(ownerId); // CHECK SERVICES ON REFRESH
+    }
+  }, [ownerId, fetchOrders, fetchNotificationCount, checkServices]);
+
+
+  // Handle Status Update (No change here)
+  const handleUpdateStatus = async (orderId, newStatus) => {
+    try {
+      const response = await fetch(`${API_URL}/orders/${orderId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      if (response.ok) {
+        fetchOrders(ownerId); 
+        fetchNotificationCount(ownerId); 
+      } else {
+        Alert.alert("Error", "Could not update order");
+      }
+    } catch (error) {
+      Alert.alert("Error", "Server connection failed");
+    }
+  };
+
+  // Helper functions (renderOrderItems, renderActionButton) are unchanged...
+
+  const renderOrderItems = (itemsString) => {
+    try {
+        const items = JSON.parse(itemsString);
+        return items.map(i => `${i.count}x ${i.name}`).join(', ');
+    } catch (e) { return "Unknown Items"; }
+  };
+  
+  const renderActionButton = (order) => {
+    const status = order.status || 'Pending';
+
+    if (status === 'Pending') {
+      return (
+        <View style={styles.actionRow}>
+           <TouchableOpacity style={styles.rejectBtn} onPress={() => handleUpdateStatus(order.id, 'Rejected')}>
+              <Text style={styles.btnTextRed}>Reject</Text>
+           </TouchableOpacity>
+           <TouchableOpacity style={styles.acceptBtn} onPress={() => handleUpdateStatus(order.id, 'Picked Up')}>
+              <Text style={styles.btnTextWhite}>Accept & Pickup</Text>
+           </TouchableOpacity>
+        </View>
+      );
+    }
+
+    if (status === 'Picked Up') {
+        return (
+            <TouchableOpacity style={styles.actionBtn} onPress={() => handleUpdateStatus(order.id, 'Washing')}>
+                <Text style={styles.btnTextWhite}>Start Washing 💧</Text>
+            </TouchableOpacity>
+        );
+    }
+    if (status === 'Washing') {
+        return (
+            <TouchableOpacity style={styles.actionBtn} onPress={() => handleUpdateStatus(order.id, 'Ironing')}>
+                <Text style={styles.btnTextWhite}>Start Ironing 🔥</Text>
+            </TouchableOpacity>
+        );
+    }
+    if (status === 'Ironing') {
+        return (
+            <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#4CAF50'}]} onPress={() => handleUpdateStatus(order.id, 'Ready')}>
+                <Text style={styles.btnTextWhite}>Mark as Ready ✅</Text>
+            </TouchableOpacity>
+        );
+    }
+    if (status === 'Ready') {
+        return (
+            <TouchableOpacity style={styles.actionBtn} onPress={() => handleUpdateStatus(order.id, 'Delivered')}>
+                <Text style={styles.btnTextWhite}>Out for Delivery 🚚</Text>
+            </TouchableOpacity>
+        );
+    }
+    if (status === 'Delivered') {
+        return (
+            <View style={[styles.statusBadge, {backgroundColor: '#E8F5E9', marginTop: 10}]}>
+                <Text style={{color: 'green', fontWeight:'bold', textAlign:'center'}}>Order Completed 🎉</Text>
+            </View>
+        );
+    }
+    
+    // Status Rejected
+    if (status === 'Rejected') {
+        return (
+            <View style={[styles.statusBadge, {backgroundColor: '#FFEBEE', marginTop: 10}]}>
+                <Text style={{color: 'red', fontWeight:'bold', textAlign:'center'}}>Order Rejected ❌</Text>
+            </View>
+        );
+    }
+
+    return null; 
+  };
+  
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.shopName}>{shopName}</Text>
+          <Text style={styles.statusText}>{isOnline ? '🟢 Shop is Online' : '🔴 Shop is Offline'}</Text>
+        </View>
+        <View style={styles.headerActions}>
+            <Switch value={isOnline} onValueChange={setIsOnline} trackColor={{ false: "#767577", true: "#4B39EF" }} />
+            
+            {/* PROFILE BUTTON with Notification Badge */}
+            <TouchableOpacity 
+                style={styles.profileBtn}
+                onPress={() => router.push('/provider/profile')}
+            >
+                <Ionicons name="person" size={20} color="#fff" />
+                {notificationCount > 0 && (
+                    <View style={styles.notificationBadge}>
+                        <Text style={styles.notificationText}>{notificationCount > 9 ? '9+' : notificationCount}</Text>
+                    </View>
+                )}
+            </TouchableOpacity>
+        </View>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+        
+        {/* --- CRITICAL WARNING BANNER --- */}
+        {!hasServices && (
+            <TouchableOpacity style={styles.warningBanner} onPress={() => router.push('/provider/services')}>
+                <Ionicons name="alert-circle-outline" size={24} color="#FF6F00" />
+                <View style={styles.warningTextContainer}>
+                    <Text style={styles.warningTitle}>SHOP INCOMPLETE</Text>
+                    <Text style={styles.warningText}>
+                        Customers cannot see your shop until you set your prices. Tap here to manage services.
+                    </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={24} color="#FF6F00" />
+            </TouchableOpacity>
+        )}
+
+        <Text style={styles.sectionTitle}>Active Orders</Text>
+
+        {orders.length === 0 ? (
+          <Text style={{textAlign: 'center', color: '#999', marginTop: 20}}>No orders yet.</Text>
+        ) : (
+          orders.map((order) => (
+            <View key={order.id} style={styles.orderCard}>
+              <View style={styles.orderHeader}>
+                <Text style={styles.customerName}>{order.transaction_id || "Customer"}</Text> 
+                <View style={styles.statusBadge}>
+                    <Text style={styles.statusTextBadge}>{order.status || 'Pending'}</Text>
+                </View>
+              </View>
+              
+              <Text style={styles.orderItems}>{renderOrderItems(order.items)}</Text>
+              <Text style={styles.orderAddress}>📍 Pickup: {order.address}</Text>
+              <Text style={styles.orderTime}>⏱ Time: {order.pickup_time}</Text>
+              <Text style={styles.paymentMethod}>💰 Total: Rs {order.total_price}</Text>
+              
+              {/* Dynamic Button Area */}
+              {renderActionButton(order)}
+
+            </View>
+          ))
+        )}
+
+        <TouchableOpacity 
+            style={styles.menuButton}
+            onPress={() => router.push('/provider/services')} 
+        >
+            <Ionicons name="pricetag" size={20} color="#fff" style={{marginRight: 10}} />
+            <Text style={styles.menuButtonText}>Manage Services & Prices</Text>
+        </TouchableOpacity>
+
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#F1F4F8', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, backgroundColor: '#fff', elevation: 2 },
+  shopName: { fontSize: 20, fontWeight: 'bold', color: '#101213' },
+  statusText: { fontSize: 14, color: '#57636C', marginTop: 4 },
+  
+  headerActions: { flexDirection: 'row', alignItems: 'center' },
+  
+  // Warning Banner Styles
+  warningBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#FFFBEA', // Light yellow background
+      padding: 15,
+      borderRadius: 12,
+      marginBottom: 20,
+      borderLeftWidth: 5,
+      borderLeftColor: '#FF6F00',
+  },
+  warningTextContainer: { flex: 1, marginLeft: 10, marginRight: 10 },
+  warningTitle: { fontWeight: 'bold', color: '#FF6F00', fontSize: 14 },
+  warningText: { fontSize: 12, color: '#101213' },
+
+  profileBtn: {
+    backgroundColor: '#101213',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 15,
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#FF5963',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  notificationText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  
+  content: { padding: 20 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#101213' },
+  orderCard: { backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 15, elevation: 2 },
+  orderHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  customerName: { fontSize: 16, fontWeight: 'bold', color: '#101213', flex: 1 },
+  statusBadge: { backgroundColor: '#F1F4F8', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  statusTextBadge: { fontSize: 12, fontWeight: 'bold', color: '#4B39EF' },
+  orderItems: { color: '#101213', fontWeight: '500', marginBottom: 5 },
+  orderAddress: { color: '#57636C', fontSize: 12 },
+  orderTime: { color: '#57636C', fontSize: 12, marginBottom: 5 },
+  paymentMethod: { color: '#57636C', fontSize: 14, marginBottom: 5, fontWeight:'bold' },
+  actionRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 },
+  rejectBtn: { flex: 1, marginRight: 10, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#FF5963', alignItems: 'center' },
+  acceptBtn: { flex: 1, marginLeft: 10, padding: 12, borderRadius: 8, backgroundColor: '#4B39EF', alignItems: 'center' },
+  actionBtn: { width: '100%', padding: 12, borderRadius: 8, backgroundColor: '#4B39EF', alignItems: 'center', marginTop: 5 },
+  btnTextRed: { color: '#FF5963', fontWeight: 'bold' },
+  btnTextWhite: { color: '#fff', fontWeight: 'bold' },
+  menuButton: { flexDirection: 'row', backgroundColor: '#101213', padding: 15, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
+  menuButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' }
+});
