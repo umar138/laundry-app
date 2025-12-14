@@ -2,122 +2,61 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { Alert, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
+} from 'react-native';
 
-// 🔗 SERVER ADDRESS
+// ✅ CORRECT SERVER IP
 const API_URL = 'http://192.168.18.21:3000'; 
 
-export default function ProviderProfileScreen() {
+export default function ProviderProfile() {
   const router = useRouter();
-  const [user, setUser] = useState({ 
-    id: null,
-    name: '', 
-    email: '', 
-    shopName: '',
-    address: '' 
-  });
-  const [isSaving, setIsSaving] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
-  // 1. Fetch Owner Data on Load
   useEffect(() => {
-    const loadOwnerData = async () => {
-      const userId = await AsyncStorage.getItem('user_id');
-      const userName = await AsyncStorage.getItem('user_name');
-      const userRole = await AsyncStorage.getItem('user_role');
-      const userEmail = await AsyncStorage.getItem('user_email') || '';
+    const fetchProfile = async () => {
+      try {
+        const id = await AsyncStorage.getItem('user_id');
+        if (!id) return;
 
-      if (!userId || userRole !== 'owner') {
-        router.replace('/role-selection');
-        return;
+        const response = await fetch(`${API_URL}/users/${id}`);
+        if (response.ok) {
+          const data = await response.json();
+          setUser(data);
+        }
+      } catch (error) {
+        // Silent fail or alert
+      } finally {
+        setLoading(false);
       }
-      
-      // We rely on data saved during signup/login
-      setUser({
-        id: userId,
-        name: userName || 'Owner',
-        email: userEmail,
-        shopName: `${userName || 'Default'}'s Laundry Shop`, // Placeholder/display name
-        address: '123 Laundry Street, Islamabad', // Placeholder/default address
-      });
     };
-    loadOwnerData();
+    fetchProfile();
   }, []);
 
-  // 2. Profile Update Function (Uses the same PUT /users/:id endpoint)
-  const handleSave = async () => {
-    if (!user.id || !user.name || !user.email || !user.address) {
-      Alert.alert("Error", "All fields are required.");
-      return;
-    }
-
-    setIsSaving(true);
-    
-    try {
-      const response = await fetch(`${API_URL}/users/${user.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: user.name,
-          email: user.email,
-          address: user.address,
-          // Note: shopName is usually a separate update, but for this simple schema, 
-          // we are only updating name, email, and address in the users table.
-        }),
-      });
-
-      if (response.ok) {
-        // Update local storage to reflect changes immediately
-        await AsyncStorage.setItem('user_name', user.name);
-        await AsyncStorage.setItem('user_email', user.email);
-        
-        Alert.alert("Success", "Shop profile updated!");
-        // Update the displayed shop name (which uses user.name as a base)
-        setUser(prev => ({ ...prev, shopName: `${user.name}'s Laundry Shop` }));
-
-      } else {
-        const data = await response.json();
-        Alert.alert("Update Failed", data.message || "Failed to update profile on server.");
-      }
-    } catch (error) {
-      Alert.alert("Connection Error", "Could not connect to server to save changes.");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-
-  // 3. Logout Function
   const handleLogout = async () => {
-    Alert.alert(
-      "Log Out",
-      "Are you sure you want to log out of your Partner Account?",
-      [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "Log Out", 
-          onPress: async () => {
-            await AsyncStorage.clear(); 
-            router.replace('/role-selection'); 
-          }
-        }
-      ]
-    );
+    Alert.alert("Log Out", "Are you sure you want to log out?", [
+      { text: "Cancel", style: "cancel" },
+      { 
+        text: "Log Out", 
+        style: 'destructive',
+        onPress: async () => {
+          await AsyncStorage.clear();
+          router.replace('/login');
+        } 
+      }
+    ]);
   };
 
-  const InputRow = ({ label, value, iconName, onChangeText, keyboardType = 'default' }) => (
-    <View style={styles.dataRow}>
-      <Ionicons name={iconName} size={24} color="#FF6F00" style={styles.icon} />
-      <View style={styles.dataTextContainer}>
-        <Text style={styles.dataLabel}>{label}</Text>
-        <TextInput
-            style={styles.dataInput}
-            value={value}
-            onChangeText={onChangeText}
-            keyboardType={keyboardType}
-        />
-      </View>
-    </View>
-  );
+  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#4B39EF" /></View>;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -125,91 +64,65 @@ export default function ProviderProfileScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#101213" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Partner Profile</Text>
-        <TouchableOpacity onPress={handleSave} style={styles.saveBtn} disabled={isSaving}>
-            <Text style={styles.saveBtnText}>{isSaving ? "Saving..." : "Save"}</Text>
-        </TouchableOpacity>
+        <Text style={styles.headerTitle}>My Profile</Text>
+        <View style={{width: 24}} />
       </View>
-      
-      <ScrollView contentContainerStyle={styles.content}>
-        
-        <View style={styles.profileHeader}>
-          <Ionicons name="business-outline" size={100} color="#FF6F00" />
-          <Text style={styles.shopName}>{user.shopName}</Text>
-          <Text style={styles.userName}>Manager: {user.name}</Text>
+
+      <View style={styles.content}>
+        <View style={styles.avatarContainer}>
+          <View style={styles.avatar}>
+             <Text style={styles.avatarText}>{user?.name?.charAt(0) || "U"}</Text>
+          </View>
+          <Text style={styles.name}>{user?.name || "Laundry Owner"}</Text>
+          <Text style={styles.role}>Shop Partner</Text>
         </View>
 
-        <View style={styles.dataSection}>
-          <Text style={styles.sectionTitle}>Edit Shop Information</Text>
-          
-          <InputRow 
-            label="Manager Name" 
-            value={user.name} 
-            iconName="person-outline" 
-            onChangeText={(text) => setUser({...user, name: text})}
-          />
-          <InputRow 
-            label="Shop Address" 
-            value={user.address} 
-            iconName="location-outline" 
-            onChangeText={(text) => setUser({...user, address: text})}
-          />
-          <InputRow 
-            label="Login Email" 
-            value={user.email} 
-            iconName="mail-outline" 
-            onChangeText={(text) => setUser({...user, email: text})}
-            keyboardType='email-address'
-          />
-          
+        <View style={styles.infoCard}>
+          <View style={styles.row}>
+            <Ionicons name="storefront-outline" size={20} color="#57636C" />
+            <Text style={styles.infoText}>{user?.shop_name || "No Shop Name"}</Text>
+          </View>
+          <View style={styles.divider} />
+          <View style={styles.row}>
+            <Ionicons name="mail-outline" size={20} color="#57636C" />
+            <Text style={styles.infoText}>{user?.email || "No Email"}</Text>
+          </View>
+          <View style={styles.divider} />
+          <View style={styles.row}>
+            <Ionicons name="location-outline" size={20} color="#57636C" />
+            <Text style={styles.infoText}>{user?.address || "No Address"}</Text>
+          </View>
+          <View style={styles.divider} />
+          <View style={styles.row}>
+            <Ionicons name="call-outline" size={20} color="#57636C" />
+            <Text style={styles.infoText}>{user?.phone || "No Phone"}</Text>
+          </View>
         </View>
-        
+
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
           <Text style={styles.logoutText}>Log Out</Text>
-          <Ionicons name="log-out-outline" size={24} color="#fff" style={{ marginLeft: 10 }} />
+          <Ionicons name="log-out-outline" size={20} color="#FF5963" />
         </TouchableOpacity>
-
-      </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F1F4F8', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', padding: 20, alignItems: 'center', backgroundColor: '#fff', elevation: 2 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', padding: 20, backgroundColor: '#fff', alignItems: 'center' },
   headerTitle: { fontSize: 18, fontWeight: 'bold' },
-  saveBtn: { backgroundColor: '#FF6F00', paddingVertical: 8, paddingHorizontal: 15, borderRadius: 20 },
-  saveBtnText: { color: '#fff', fontWeight: 'bold' },
-  
-  content: { padding: 20, flexGrow: 1 },
-  
-  profileHeader: { alignItems: 'center', padding: 20, marginBottom: 20 },
-  shopName: { fontSize: 28, fontWeight: 'bold', color: '#101213', marginTop: 10 },
-  userName: { fontSize: 16, color: '#57636C' },
-
-  dataSection: { backgroundColor: '#fff', borderRadius: 12, padding: 15, marginBottom: 30 },
-  sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#101213', marginBottom: 15 },
-  
-  dataRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F1F4F8' },
-  icon: { marginRight: 15 },
-  dataTextContainer: { flex: 1 },
-  dataLabel: { fontSize: 12, color: '#57636C' },
-  dataInput: { 
-      fontSize: 16, 
-      fontWeight: '600', 
-      color: '#101213',
-      paddingVertical: 0,
-      minHeight: 25 
-  },
-  
-  logoutBtn: { 
-    backgroundColor: '#FF6F00', 
-    borderRadius: 30, 
-    height: 50, 
-    flexDirection: 'row',
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    marginTop: 20
-  },
-  logoutText: { color: '#fff', fontSize: 18, fontWeight: 'bold' }
+  content: { padding: 20 },
+  avatarContainer: { alignItems: 'center', marginBottom: 30 },
+  avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#4B39EF', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
+  avatarText: { color: '#fff', fontSize: 32, fontWeight: 'bold' },
+  name: { fontSize: 22, fontWeight: 'bold', color: '#101213' },
+  role: { fontSize: 14, color: '#57636C' },
+  infoCard: { backgroundColor: '#fff', borderRadius: 12, padding: 15, marginBottom: 30 },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
+  infoText: { marginLeft: 15, fontSize: 16, color: '#101213' },
+  divider: { height: 1, backgroundColor: '#F1F4F8' },
+  logoutBtn: { flexDirection: 'row', backgroundColor: '#fff', borderRadius: 12, padding: 15, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#FF5963' },
+  logoutText: { color: '#FF5963', fontSize: 16, fontWeight: 'bold', marginRight: 10 },
 });

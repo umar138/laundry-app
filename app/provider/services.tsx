@@ -1,127 +1,90 @@
-import React, { useCallback, useEffect, useState } from 'react';
-// CRITICAL FIX: Added RefreshControl to the import list
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect, useRouter } from 'expo-router';
-import { Alert, Platform, RefreshControl, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from 'react-native';
 
-// 🔗 SERVER ADDRESS
+// ✅ CORRECT SERVER IP
 const API_URL = 'http://192.168.18.21:3000'; 
 
 export default function ServicesScreen() {
   const router = useRouter();
-  const [ownerId, setOwnerId] = useState(null);
-  const [services, setServices] = useState([]);
-  const [newServiceName, setNewServiceName] = useState('');
-  const [newServicePrice, setNewServicePrice] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  const [services, setServices] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [ownerId, setOwnerId] = useState<string | null>(null);
 
-  // 1. Fetch Owner ID
+  // Add Modal State
+  const [modalVisible, setModalVisible] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newPrice, setNewPrice] = useState('');
+
   useEffect(() => {
-    const loadOwnerId = async () => {
-      const id = await AsyncStorage.getItem('user_id');
-      setOwnerId(id);
+    const load = async () => {
+        const id = await AsyncStorage.getItem('user_id');
+        setOwnerId(id);
+        fetchServices(id);
     };
-    loadOwnerId();
+    load();
   }, []);
 
-  // 2. Fetch Services
-  const fetchServices = useCallback(async (id) => {
-    if (!id) return;
-    setRefreshing(true);
+  const fetchServices = async (id: any) => {
     try {
-      const response = await fetch(`${API_URL}/services/${id}`);
-      const data = await response.json();
-      setServices(data);
-    } catch (error) {
-      Alert.alert("Error", "Failed to load services.");
+        const response = await fetch(`${API_URL}/services/${id}`);
+        const data = await response.json();
+        setServices(data);
+    } catch (e) {
+        console.log("Error loading services");
     } finally {
-      setRefreshing(false);
+        setLoading(false);
     }
-  }, []);
+  };
 
-  // 3. Auto-refresh on screen focus (or when ownerId changes)
-  useFocusEffect(
-    useCallback(() => {
-        if (ownerId) {
+  const handleAddService = async () => {
+    if(!newName || !newPrice) return Alert.alert("Error", "Enter name and price");
+
+    try {
+        const response = await fetch(`${API_URL}/services`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                owner_id: ownerId,
+                name: newName,
+                price: parseFloat(newPrice)
+            })
+        });
+
+        if(response.ok) {
+            setModalVisible(false);
+            setNewName('');
+            setNewPrice('');
             fetchServices(ownerId);
         }
-        return () => {};
-    }, [ownerId, fetchServices])
-  );
-
-  const onRefresh = useCallback(() => {
-    if (ownerId) {
-      fetchServices(ownerId);
+    } catch(e) {
+        Alert.alert("Error", "Could not add service");
     }
-  }, [ownerId, fetchServices]);
+  };
 
-
-  // 4. Add/Update Services
-  const handleSaveServices = async () => {
-    if (!ownerId) {
-      Alert.alert("Error", "Owner ID not found.");
-      return;
-    }
-
-    if (services.length === 0) {
-        Alert.alert("Required", "Please add at least one service before saving.");
-        return;
-    }
-
-    setIsSaving(true);
-
-    try {
-      const response = await fetch(`${API_URL}/services`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          owner_id: ownerId,
-          services: services,
-        }),
-      });
-
-      if (response.ok) {
-        Alert.alert("Success", "Services updated successfully.");
-        // Redirect back to dashboard after saving the initial setup
-        router.replace('/provider/dashboard');
-      } else {
-        Alert.alert("Error", "Failed to save services on server.");
+  const handleDelete = async (id: number) => {
+      try {
+          await fetch(`${API_URL}/services/${id}`, { method: 'DELETE' });
+          fetchServices(ownerId);
+      } catch(e) {
+          Alert.alert("Error", "Could not delete");
       }
-    } catch (error) {
-      Alert.alert("Connection Error", "Could not connect to server.");
-    } finally {
-      setIsSaving(false);
-    }
   };
-
-  // 5. Add New Service Locally
-  const handleAddService = () => {
-    const name = newServiceName.trim();
-    const price = parseFloat(newServicePrice);
-
-    if (!name || isNaN(price) || price <= 0) {
-      Alert.alert("Invalid Input", "Please enter a valid name and price.");
-      return;
-    }
-    
-    // Check for duplicates
-    if (services.some(s => s.name.toLowerCase() === name.toLowerCase())) {
-        Alert.alert("Duplicate", "This service already exists.");
-        return;
-    }
-
-    setServices(prev => [...prev, { name, price }]);
-    setNewServiceName('');
-    setNewServicePrice('');
-  };
-  
-  // 6. Remove Service Locally
-  const handleRemoveService = (serviceName) => {
-      setServices(prev => prev.filter(s => s.name !== serviceName));
-  };
-
 
   return (
     <SafeAreaView style={styles.container}>
@@ -129,99 +92,72 @@ export default function ServicesScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#101213" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Manage Services & Prices</Text>
-        <TouchableOpacity onPress={handleSaveServices} style={styles.saveBtn} disabled={isSaving}>
-            <Text style={styles.saveBtnText}>{isSaving ? "Saving..." : "Save Prices"}</Text>
+        <Text style={styles.headerTitle}>Manage Services</Text>
+        <TouchableOpacity onPress={() => setModalVisible(true)}>
+             <Ionicons name="add-circle" size={30} color="#4B39EF" />
         </TouchableOpacity>
       </View>
-      
-      <ScrollView 
-        style={styles.content} 
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
-        
-        {/* Empty State / First-Time Setup Guide */}
-        {services.length === 0 && (
-          <View style={styles.emptyState}>
-             <Ionicons name="pricetags-outline" size={64} color="#FF6F00" />
-             <Text style={styles.emptyTitle}>Welcome, New Partner!</Text>
-             <Text style={styles.emptyText}>
-                Before you can accept orders, please define at least one laundry service and price. 
-             </Text>
-          </View>
-        )}
 
-
-        <Text style={styles.sectionTitle}>Add New Service</Text>
-        <View style={styles.inputCard}>
-            <View style={styles.inputGroup}>
-                <TextInput 
-                    placeholder="Service Name (e.g., Shirt Wash & Iron)" 
-                    style={styles.inputName} 
-                    value={newServiceName}
-                    onChangeText={setNewServiceName}
-                />
-                <TextInput 
-                    placeholder="Price (Rs)" 
-                    style={styles.inputPrice} 
-                    keyboardType="numeric"
-                    value={newServicePrice}
-                    onChangeText={setNewServicePrice}
-                />
-            </View>
-            <TouchableOpacity style={styles.addBtn} onPress={handleAddService}>
-                <Ionicons name="add-circle-outline" size={24} color="#fff" />
-                <Text style={styles.addBtnText}>Add Service</Text>
-            </TouchableOpacity>
-        </View>
-
-        <Text style={styles.sectionTitle}>Current Pricing ({services.length} Items)</Text>
-        <View style={styles.listContainer}>
-          {services.map((service, index) => (
-            <View key={index} style={styles.serviceRow}>
-              <View style={styles.serviceText}>
-                <Text style={styles.serviceName}>{service.name}</Text>
-                <Text style={styles.servicePrice}>Rs {service.price}</Text>
-              </View>
-              <TouchableOpacity onPress={() => handleRemoveService(service.name)}>
-                <Ionicons name="trash-outline" size={24} color="#FF5963" />
-              </TouchableOpacity>
-            </View>
-          ))}
-        </View>
-
+      <ScrollView contentContainerStyle={styles.content}>
+        {loading ? <ActivityIndicator size="large" color="#4B39EF" /> : 
+         services.length === 0 ? (
+             <Text style={styles.emptyText}>No services added yet. Tap + to add.</Text>
+         ) : (
+             services.map((item, index) => (
+                 <View key={index} style={styles.card}>
+                     <View>
+                        <Text style={styles.name}>{item.name}</Text>
+                        <Text style={styles.price}>Rs {item.price}</Text>
+                     </View>
+                     <TouchableOpacity onPress={() => handleDelete(item.id)}>
+                         <Ionicons name="trash-outline" size={24} color="#FF5963" />
+                     </TouchableOpacity>
+                 </View>
+             ))
+         )
+        }
       </ScrollView>
+
+      {/* ADD SERVICE MODAL */}
+      <Modal animationType="slide" transparent={true} visible={modalVisible} onRequestClose={() => setModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+                <Text style={styles.modalTitle}>Add New Service</Text>
+                
+                <TextInput placeholder="Service Name (e.g. Shirt Wash)" style={styles.input} value={newName} onChangeText={setNewName} />
+                <TextInput placeholder="Price (e.g. 150)" style={styles.input} value={newPrice} onChangeText={setNewPrice} keyboardType="numeric" />
+
+                <View style={styles.modalActions}>
+                    <TouchableOpacity style={styles.modalCancel} onPress={() => setModalVisible(false)}>
+                        <Text style={{fontWeight: 'bold', color: '#666'}}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.modalAdd} onPress={handleAddService}>
+                        <Text style={{fontWeight: 'bold', color: '#fff'}}>Add Service</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F1F4F8', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', padding: 20, alignItems: 'center', backgroundColor: '#fff', elevation: 2 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', padding: 20, backgroundColor: '#fff', alignItems: 'center' },
   headerTitle: { fontSize: 18, fontWeight: 'bold' },
-  saveBtn: { backgroundColor: '#4B39EF', paddingVertical: 8, paddingHorizontal: 15, borderRadius: 20 },
-  saveBtnText: { color: '#fff', fontWeight: 'bold' },
+  content: { padding: 20 },
+  emptyText: { textAlign: 'center', color: '#999', marginTop: 50 },
+  card: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 10 },
+  name: { fontSize: 16, fontWeight: 'bold', color: '#101213' },
+  price: { fontSize: 14, color: '#4B39EF', fontWeight: '600' },
   
-  content: { padding: 20, flexGrow: 1 },
-  sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#101213', marginBottom: 15, marginTop: 10 },
-
-  // Empty State Styles
-  emptyState: { alignItems: 'center', padding: 30, backgroundColor: '#FFF', borderRadius: 12, marginBottom: 20, borderWidth: 1, borderColor: '#FF6F0020' },
-  emptyTitle: { fontSize: 20, fontWeight: 'bold', color: '#101213', marginTop: 10 },
-  emptyText: { fontSize: 14, color: '#57636C', textAlign: 'center', marginTop: 5 },
-
-  // Input Card Styles
-  inputCard: { backgroundColor: '#fff', borderRadius: 12, padding: 15, marginBottom: 20 },
-  inputGroup: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
-  inputName: { flex: 2, backgroundColor: '#F1F4F8', padding: 10, borderRadius: 8, marginRight: 10 },
-  inputPrice: { flex: 1, backgroundColor: '#F1F4F8', padding: 10, borderRadius: 8, textAlign: 'center' },
-  addBtn: { backgroundColor: '#4CAF50', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 10, borderRadius: 8 },
-  addBtnText: { color: '#fff', fontWeight: 'bold', marginLeft: 5 },
-  
-  // List Styles
-  listContainer: { backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 15, marginBottom: 30 },
-  serviceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#F1F4F8' },
-  serviceText: { flexDirection: 'row', flex: 1, justifyContent: 'space-between', marginRight: 15 },
-  serviceName: { fontSize: 16, fontWeight: '600', color: '#101213' },
-  servicePrice: { fontSize: 16, fontWeight: 'bold', color: '#4B39EF' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modalContent: { width: '85%', backgroundColor: '#fff', borderRadius: 16, padding: 20 },
+  modalTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 20 },
+  input: { backgroundColor: '#F1F4F8', borderRadius: 8, padding: 12, marginBottom: 15, borderWidth: 1, borderColor: '#E0E0E0' },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 },
+  modalCancel: { padding: 10, marginRight: 10 },
+  modalAdd: { backgroundColor: '#4B39EF', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
 });
